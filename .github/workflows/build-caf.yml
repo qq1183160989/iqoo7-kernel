@@ -108,18 +108,8 @@ jobs:
           cd kernel
           USE_CFG="${{ github.event.inputs.use_vendor_cfg }}"
           if [ "$USE_CFG" = "true" ]; then
-            echo "=== 用原厂配置 ==="
+            echo "=== 用原厂配置 (完整 5592 项, 含 WALT/KGSL/CPUIDLE/RPMH) ==="
             cp "$GITHUB_WORKSPACE/config/stock_6.17.6_defconfig" .config
-            echo ""
-            echo "=== 关掉 CAF 树里编不过的项 ==="
-            # kernel/sched/walt/trace.h 用 #include "./trace.h", CAF 的 Makefile
-            # 没提供对应 include 路径 -> 先关掉 WALT, 保证能编完
-            for opt in SCHED_WALT MSM_PERFORMANCE; do
-              if grep -q "^CONFIG_${opt}=y" .config; then
-                sed -i "s/^CONFIG_${opt}=y/# CONFIG_${opt} is not set/" .config
-                echo "  已关闭 CONFIG_${opt}"
-              fi
-            done
           else
             echo "=== 用 CAF 自带 lahaina qgki 配置 ==="
             cp arch/arm64/configs/vendor/lahaina_QGKI.config .config
@@ -132,6 +122,19 @@ jobs:
           echo ""
           echo "=== 关键项 ==="
           grep -E '^CONFIG_LOCALVERSION=|^CONFIG_SCHED_WALT=|^CONFIG_ARM_QCOM_LPM_CPUIDLE=|^CONFIG_QCOM_KGSL=|^CONFIG_MODVERSIONS=|^CONFIG_TRIM_UNUSED_KSYMS' .config || true
+
+      # ---------- 打补丁: 跳过模块版本校验 ----------
+      # 目的: 让 vendor_boot 里原厂编的 .ko (5.4.147) 能加载进本内核 (5.4.289)
+      # 第三方 AK3 内核也是靠同样手段, 否则它的模块也加载不了
+      - name: 打补丁 — 跳过模块版本与 CRC 校验
+        run: |
+          cd kernel
+          python3 "$GITHUB_WORKSPACE/patch_module.py" kernel/module.c
+          echo ""
+          echo "=== 补丁后的函数开头 ==="
+          grep -n -A3 "static int check_modinfo" kernel/module.c | head -8
+          echo "---"
+          grep -n -A3 "static int check_version" kernel/module.c | head -8
 
       # ---------- 编译 ----------
       # 关键: 完整日志写进 build.log 并上传, 不要用 tail 截断 (会丢错误信息)
