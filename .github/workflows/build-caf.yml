@@ -144,17 +144,9 @@ jobs:
           N=$(nproc)
           echo "=== 开始编译 (用 $N 核) ==="
           set +e
-          # CAF 树里部分 Makefile 漏了 "-I$(src)", 导致 define_trace.h 里
-          # 生成的 "./xxx.h" 找不到. 补上缺失的行 (只补真正缺的, 不能全局加 -I,
-          # 否则会互相遮蔽: 所有 "./trace.h" 都命中同一个目录 -> tracepoint 丢失)
-          for mk in "drivers/hid/Makefile:CFLAGS_hid-trace.o" \
-                    "kernel/sched/walt/Makefile:CFLAGS_trace.o"; do
-            f="${mk%%:*}"; var="${mk##*:}"
-            if [ -f "$f" ] && ! grep -q "$var" "$f"; then
-              echo "${var} := -I\$(src)" >> "$f"
-              echo "  已补: $f -> $var"
-            fi
-          done
+          # CAF 树里若干目录漏了 CFLAGS_<x>.o := -I$(src), 导致
+          # define_trace.h 生成的 "./xxx-trace.h" 找不到. 自动扫描全树补齐.
+          python3 "$GITHUB_WORKSPACE/fix_trace_includes.py" .
           echo ""
           make -j$N ARCH=arm64 CC=clang LLVM=1 LLVM_IAS=1 \
                CROSS_COMPILE=aarch64-linux-gnu- \
