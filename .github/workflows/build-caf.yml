@@ -110,6 +110,16 @@ jobs:
           if [ "$USE_CFG" = "true" ]; then
             echo "=== 用原厂配置 ==="
             cp "$GITHUB_WORKSPACE/config/stock_6.17.6_defconfig" .config
+            echo ""
+            echo "=== 关掉 CAF 树里编不过的项 ==="
+            # kernel/sched/walt/trace.h 用 #include "./trace.h", CAF 的 Makefile
+            # 没提供对应 include 路径 -> 先关掉 WALT, 保证能编完
+            for opt in SCHED_WALT MSM_PERFORMANCE; do
+              if grep -q "^CONFIG_${opt}=y" .config; then
+                sed -i "s/^CONFIG_${opt}=y/# CONFIG_${opt} is not set/" .config
+                echo "  已关闭 CONFIG_${opt}"
+              fi
+            done
           else
             echo "=== 用 CAF 自带 lahaina qgki 配置 ==="
             cp arch/arm64/configs/vendor/lahaina_QGKI.config .config
