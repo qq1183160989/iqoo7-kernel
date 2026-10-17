@@ -141,8 +141,14 @@ jobs:
           N=$(nproc)
           echo "=== 开始编译 (用 $N 核) ==="
           set +e
+          # CAF 树里 hid-trace.h / walt/trace.h 用 TRACE_INCLUDE_PATH="." 拼出
+          # "./xxx.h" 的 include, 编译器会去内核根找 -> 找不到.
+          # 把这两个目录加进 -I, 让 "./xxx.h" 能命中.
+          EXTRA="-I$(pwd)/drivers/hid -I$(pwd)/kernel/sched/walt"
+          echo "KCFLAGS: $EXTRA"
           make -j$N ARCH=arm64 CC=clang LLVM=1 LLVM_IAS=1 \
-               CROSS_COMPILE=aarch64-linux-gnu- Image modules dtbs \
+               CROSS_COMPILE=aarch64-linux-gnu- KCFLAGS="$EXTRA" \
+               Image modules dtbs \
                > build.log 2>&1
           RC=$?
           echo ""
