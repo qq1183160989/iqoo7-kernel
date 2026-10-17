@@ -1,0 +1,169 @@
+# ============================================================
+#  从 CAF 官方源码编译 SM8350 (lahaina) qgki 内核
+#
+#  目的: 用公开的高通源码 + 你手机的原厂配置, 试编一版 5.4 内核
+#        (vivo 没有开源 SM8350 的内核, 这是唯一的公开来源)
+#
+#  源码: git.codelinaro.org/clo/la/kernel/msm-5.4
+#        分支 LA.UM.9.14.1.c30 (5.4.289)
+#  配置: config/stock_6.17.6_defconfig (从 iQOO 7 的 boot 镜像解出)
+#
+#  说明: 编译器和源码版本都会影响 ABI(符号 CRC), 所以这一版不一定能加载
+#        你手机的厂商驱动 —— 编完必须先验证, 不要直接刷。
+# ============================================================
+
+name: CAF 编译 SM8350 内核
+
+on:
+  workflow_dispatch:
+    inputs:
+      caf_branch:
+        description: 'CAF 分支'
+        required: true
+        default: 'LA.UM.9.14.1.c30'
+      with_ksu:
+        description: '是否集成 KernelSU (true/false)'
+        required: true
+        default: 'false'
+      clang_ver:
+        description: 'clang 版本 (14 / 12 / 11)'
+        required: true
+        default: '14'
+      use_vendor_cfg:
+        description: '用原厂配置(true) 还是 CAF 自带 qgki 配置(false)'
+        required: true
+        default: 'true'
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 350
+
+    steps:
+      - name: 检出本仓库
+        uses: actions/checkout@v4
+
+      - name: 安装依赖
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq bc bison flex libssl-dev libelf-dev \
+            zip rsync cpio python3 python-is-python3 make gcc git curl unzip \
+            binutils-aarch64-linux-gnu device-tree-compiler
+          CV="${{ github.event.inputs.clang_ver }}"
+          echo "安装 clang-$CV ..."
+          sudo apt-get install -y -qq clang-$CV lld-$CV llvm-$CV || \
+            sudo apt-get install -y -qq clang llvm lld
+          echo "=== 已安装 clang ==="
+          ls /usr/bin/clang* 2>/dev/null | head -10
+          for c in clang-$CV clang; do
+            if command -v $c >/dev/null 2>&1; then
+              echo "使用: $c"; $c --version | head -n 1
+              echo "CLANG_BIN=$c" >> $GITHUB_ENV
+              break
+            fi
+          done
+
+      - name: 建立工具链软链接
+        run: |
+          CV="${{ github.event.inputs.clang_ver }}"
+          mkdir -p $HOME/tcbin
+          for t in clang ld.lld llvm-ar llvm-nm llvm-objcopy llvm-objdump \
+                   llvm-strip llvm-readelf llvm-size; do
+            src=$(command -v ${t}-${CV} 2>/dev/null || command -v ${t} 2>/dev/null)
+            if [ -n "$src" ]; then ln -sf "$src" "$HOME/tcbin/$t"; fi
+          done
+          ls -l $HOME/tcbin | head -20
+          echo "$HOME/tcbin" >> $GITHUB_PATH
+
+      # ---------- 源码 ----------
+      - name: 克隆 CAF msm-5.4
+        run: |
+          BR="${{ github.event.inputs.caf_branch }}"
+          echo "克隆 CAF msm-5.4 分支 $BR (浅克隆) ..."
+          git clone --depth 1 -b "$BR" --single-branch \
+            https://git.codelinaro.org/clo/la/kernel/msm-5.4.git kernel
+          cd kernel
+          echo "=== 版本 ==="
+          head -n 5 Makefile
+          echo "=== 提交 ==="
+          git log --oneline -1
+          echo "=== lahaina 相关配置 ==="
+          ls arch/arm64/configs/vendor/ | grep -i lahaina || echo "(无)"
+
+      - name: 集成 KernelSU
+        if: ${{ github.event.inputs.with_ksu == 'true' }}
+        run: |
+          cd kernel
+          echo "拉取 KernelSU ..."
+          curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash - || true
+          if [ -d KernelSU ]; then
+            echo "[OK] KernelSU 已就位"
+          else
+            echo "[!] KernelSU 没拉到, 继续编原版"
+          fi
+
+      # ---------- 配置 ----------
+      - name: 应用配置
+        run: |
+          cd kernel
+          USE_CFG="${{ github.event.inputs.use_vendor_cfg }}"
+          if [ "$USE_CFG" = "true" ]; then
+            echo "=== 用原厂配置 ==="
+            cp "$GITHUB_WORKSPACE/config/stock_6.17.6_defconfig" .config
+          else
+            echo "=== 用 CAF 自带 lahaina qgki 配置 ==="
+            cp arch/arm64/configs/vendor/lahaina_QGKI.config .config
+          fi
+          echo "=== 配置行数 ==="
+          wc -l .config
+          echo ""
+          echo "=== olddefconfig 补齐 ==="
+          make ARCH=arm64 CC=clang LLVM=1 LLVM_IAS=1 olddefconfig 2>&1 | tail -n 15
+          echo ""
+          echo "=== 关键项 ==="
+          grep -E '^CONFIG_LOCALVERSION=|^CONFIG_SCHED_WALT=|^CONFIG_ARM_QCOM_LPM_CPUIDLE=|^CONFIG_QCOM_KGSL=|^CONFIG_MODVERSIONS=|^CONFIG_TRIM_UNUSED_KSYMS' .config || true
+
+      # ---------- 编译 ----------
+      - name: 编译内核
+        run: |
+          cd kernel
+          N=$(nproc)
+          echo "=== 开始编译 (用 $N 核) ==="
+          set +e
+          make -j$N ARCH=arm64 CC=clang LLVM=1 LLVM_IAS=1 \
+               CROSS_COMPILE=aarch64-linux-gnu- Image modules dtbs 2>&1 | tail -n 120
+          RC=${PIPESTATUS[0]}
+          echo ""
+          echo "=== 编译退出码: $RC ==="
+          echo ""
+          echo "=== 产物检查 ==="
+          ls -lh arch/arm64/boot/Image 2>/dev/null || echo "!! Image 没生成"
+          ls -lh Module.symvers 2>/dev/null || echo "!! Module.symvers 没生成"
+          cat include/config/kernel.release 2>/dev/null || echo "!! kernel.release 没生成"
+          exit 0
+
+      - name: 版本信息
+        run: |
+          cd kernel
+          echo "=== 对照: 你手机原厂内核 ==="
+          echo "  5.4.147-qgki-gd725e4d6c02e  (clang 11.0.2)"
+          echo ""
+          echo "=== 本版编出来的 ==="
+          cat include/config/kernel.release 2>/dev/null || echo "(未生成)"
+          echo ""
+          echo "=== Image 里的版本串 ==="
+          strings arch/arm64/boot/Image 2>/dev/null | grep -oE '5\.4\.[0-9]+[-a-z0-9]*' | sort -u | head -5
+          echo ""
+          echo "=== Module.symvers 导出符号数 ==="
+          wc -l Module.symvers 2>/dev/null || echo "(无)"
+
+      - name: 上传产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: caf-sm8350-kernel
+          path: |
+            kernel/arch/arm64/boot/Image
+            kernel/Module.symvers
+            kernel/include/config/kernel.release
+            kernel/.config
+          if-no-files-found: warn
