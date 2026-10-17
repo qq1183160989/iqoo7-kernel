@@ -141,13 +141,20 @@ jobs:
           N=$(nproc)
           echo "=== 开始编译 (用 $N 核) ==="
           set +e
-          # CAF 树里 hid-trace.h / walt/trace.h 用 TRACE_INCLUDE_PATH="." 拼出
-          # "./xxx.h" 的 include, 编译器会去内核根找 -> 找不到.
-          # 把这两个目录加进 -I, 让 "./xxx.h" 能命中.
-          EXTRA="-I$(pwd)/drivers/hid -I$(pwd)/kernel/sched/walt"
-          echo "KCFLAGS: $EXTRA"
+          # CAF 树里部分 Makefile 漏了 "-I$(src)", 导致 define_trace.h 里
+          # 生成的 "./xxx.h" 找不到. 补上缺失的行 (只补真正缺的, 不能全局加 -I,
+          # 否则会互相遮蔽: 所有 "./trace.h" 都命中同一个目录 -> tracepoint 丢失)
+          for mk in "drivers/hid/Makefile:CFLAGS_hid-trace.o" \
+                    "kernel/sched/walt/Makefile:CFLAGS_trace.o"; do
+            f="${mk%%:*}"; var="${mk##*:}"
+            if [ -f "$f" ] && ! grep -q "$var" "$f"; then
+              echo "${var} := -I\$(src)" >> "$f"
+              echo "  已补: $f -> $var"
+            fi
+          done
+          echo ""
           make -j$N ARCH=arm64 CC=clang LLVM=1 LLVM_IAS=1 \
-               CROSS_COMPILE=aarch64-linux-gnu- KCFLAGS="$EXTRA" \
+               CROSS_COMPILE=aarch64-linux-gnu- \
                Image modules dtbs \
                > build.log 2>&1
           RC=$?
