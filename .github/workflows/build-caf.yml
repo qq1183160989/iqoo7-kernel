@@ -124,6 +124,7 @@ jobs:
           grep -E '^CONFIG_LOCALVERSION=|^CONFIG_SCHED_WALT=|^CONFIG_ARM_QCOM_LPM_CPUIDLE=|^CONFIG_QCOM_KGSL=|^CONFIG_MODVERSIONS=|^CONFIG_TRIM_UNUSED_KSYMS' .config || true
 
       # ---------- 编译 ----------
+      # 关键: 完整日志写进 build.log 并上传, 不要用 tail 截断 (会丢错误信息)
       - name: 编译内核
         run: |
           cd kernel
@@ -131,10 +132,17 @@ jobs:
           echo "=== 开始编译 (用 $N 核) ==="
           set +e
           make -j$N ARCH=arm64 CC=clang LLVM=1 LLVM_IAS=1 \
-               CROSS_COMPILE=aarch64-linux-gnu- Image modules dtbs 2>&1 | tail -n 120
-          RC=${PIPESTATUS[0]}
+               CROSS_COMPILE=aarch64-linux-gnu- Image modules dtbs \
+               > build.log 2>&1
+          RC=$?
           echo ""
           echo "=== 编译退出码: $RC ==="
+          echo ""
+          echo "=== 错误行 ==="
+          grep -n -E "error:|Error [0-9]+|fatal error|\*\*\*|No rule to make" build.log | head -80 || echo "(没有 error 行)"
+          echo ""
+          echo "=== 日志最后 60 行 ==="
+          tail -n 60 build.log
           echo ""
           echo "=== 产物检查 ==="
           ls -lh arch/arm64/boot/Image 2>/dev/null || echo "!! Image 没生成"
@@ -166,4 +174,5 @@ jobs:
             kernel/Module.symvers
             kernel/include/config/kernel.release
             kernel/.config
+            kernel/build.log
           if-no-files-found: warn
