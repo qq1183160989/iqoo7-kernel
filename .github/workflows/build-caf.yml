@@ -37,6 +37,10 @@ on:
         description: 'config/ 下的配置文件名'
         required: true
         default: 'stock_6.17.6_defconfig'
+      enforce_opts:
+        description: '是否强制开启 WALT/CPUIDLE/SCS (true/false)'
+        required: true
+        default: 'true'
 
 jobs:
   build:
@@ -126,21 +130,26 @@ jobs:
           make ARCH=arm64 CC=clang LLVM=1 LLVM_IAS=1 olddefconfig 2>&1 | tail -n 15
           echo ""
           echo "=== 强制开启关键项 (防止 olddefconfig 关掉) ==="
-          chmod +x scripts/config 2>/dev/null || true
-          for opt in SCHED_WALT ARM_QCOM_LPM_CPUIDLE SHADOW_CALL_STACK SHADOW_CALL_STACK_VMAP; do
-            if ./scripts/config --enable "$opt" 2>/dev/null; then
-              echo "  --enable $opt"
-            else
-              echo "  [!!] 无法设置 $opt"
-            fi
-          done
-          for opt in ARM_CPUIDLE TRIM_UNUSED_KSYMS; do
-            ./scripts/config --disable "$opt" 2>/dev/null && echo "  --disable $opt"
-          done
-          ./scripts/config --set-str UNUSED_KSYMS_WHITELIST "" 2>/dev/null && echo "  清空 UNUSED_KSYMS_WHITELIST"
-          echo ""
-          echo "=== 再跑一次 olddefconfig ==="
-          make ARCH=arm64 CC=clang LLVM=1 LLVM_IAS=1 olddefconfig 2>&1 | tail -n 8
+          ENF="${{ github.event.inputs.enforce_opts }}"
+          if [ "$ENF" = "true" ]; then
+            chmod +x scripts/config 2>/dev/null || true
+            for opt in SCHED_WALT ARM_QCOM_LPM_CPUIDLE SHADOW_CALL_STACK SHADOW_CALL_STACK_VMAP; do
+              if ./scripts/config --enable "$opt" 2>/dev/null; then
+                echo "  --enable $opt"
+              else
+                echo "  [!!] 无法设置 $opt"
+              fi
+            done
+            for opt in ARM_CPUIDLE TRIM_UNUSED_KSYMS; do
+              ./scripts/config --disable "$opt" 2>/dev/null && echo "  --disable $opt"
+            done
+            ./scripts/config --set-str UNUSED_KSYMS_WHITELIST "" 2>/dev/null && echo "  清空 UNUSED_KSYMS_WHITELIST"
+            echo ""
+            echo "=== 再跑一次 olddefconfig ==="
+            make ARCH=arm64 CC=clang LLVM=1 LLVM_IAS=1 olddefconfig 2>&1 | tail -n 8
+          else
+            echo "  (enforce_opts=false, 保持配置文件原样, 不做任何修改)"
+          fi
           echo ""
           echo "=== 复核关键项 ==="
           grep -E '^CONFIG_SHADOW_CALL_STACK=|^# CONFIG_SHADOW_CALL_STACK is not set|^CONFIG_SHADOW_CALL_STACK_VMAP=|^CONFIG_SCHED_WALT=|^CONFIG_ARM_QCOM_LPM_CPUIDLE=|^# CONFIG_ARM_CPUIDLE is not set|^CONFIG_TRIM_UNUSED_KSYMS=|^# CONFIG_TRIM_UNUSED_KSYMS is not set' .config || true
