@@ -33,6 +33,10 @@ on:
         description: '用原厂配置(true) 还是 CAF 自带 qgki 配置(false)'
         required: true
         default: 'true'
+      cfg_name:
+        description: 'config/ 下的配置文件名'
+        required: true
+        default: 'stock_6.17.6_defconfig'
 
 jobs:
   build:
@@ -107,9 +111,10 @@ jobs:
         run: |
           cd kernel
           USE_CFG="${{ github.event.inputs.use_vendor_cfg }}"
+          CFG="${{ github.event.inputs.cfg_name }}"
           if [ "$USE_CFG" = "true" ]; then
-            echo "=== 用原厂配置 (完整 5592 项, 含 WALT/KGSL/CPUIDLE/RPMH) ==="
-            cp "$GITHUB_WORKSPACE/config/stock_6.17.6_defconfig" .config
+            echo "=== 用 config/$CFG ==="
+            cp "$GITHUB_WORKSPACE/config/$CFG" .config
           else
             echo "=== 用 CAF 自带 lahaina qgki 配置 ==="
             cp arch/arm64/configs/vendor/lahaina_QGKI.config .config
