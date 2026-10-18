@@ -125,8 +125,25 @@ jobs:
           echo "=== olddefconfig 补齐 ==="
           make ARCH=arm64 CC=clang LLVM=1 LLVM_IAS=1 olddefconfig 2>&1 | tail -n 15
           echo ""
-          echo "=== 关键项 ==="
-          grep -E '^CONFIG_LOCALVERSION=|^CONFIG_SCHED_WALT=|^CONFIG_ARM_QCOM_LPM_CPUIDLE=|^CONFIG_QCOM_KGSL=|^CONFIG_MODVERSIONS=|^CONFIG_TRIM_UNUSED_KSYMS' .config || true
+          echo "=== 强制开启关键项 (防止 olddefconfig 关掉) ==="
+          chmod +x scripts/config 2>/dev/null || true
+          for opt in SCHED_WALT ARM_QCOM_LPM_CPUIDLE SHADOW_CALL_STACK SHADOW_CALL_STACK_VMAP; do
+            if ./scripts/config --enable "$opt" 2>/dev/null; then
+              echo "  --enable $opt"
+            else
+              echo "  [!!] 无法设置 $opt"
+            fi
+          done
+          for opt in ARM_CPUIDLE TRIM_UNUSED_KSYMS; do
+            ./scripts/config --disable "$opt" 2>/dev/null && echo "  --disable $opt"
+          done
+          ./scripts/config --set-str UNUSED_KSYMS_WHITELIST "" 2>/dev/null && echo "  清空 UNUSED_KSYMS_WHITELIST"
+          echo ""
+          echo "=== 再跑一次 olddefconfig ==="
+          make ARCH=arm64 CC=clang LLVM=1 LLVM_IAS=1 olddefconfig 2>&1 | tail -n 8
+          echo ""
+          echo "=== 复核关键项 ==="
+          grep -E '^CONFIG_SHADOW_CALL_STACK=|^# CONFIG_SHADOW_CALL_STACK is not set|^CONFIG_SHADOW_CALL_STACK_VMAP=|^CONFIG_SCHED_WALT=|^CONFIG_ARM_QCOM_LPM_CPUIDLE=|^# CONFIG_ARM_CPUIDLE is not set|^CONFIG_TRIM_UNUSED_KSYMS=|^# CONFIG_TRIM_UNUSED_KSYMS is not set' .config || true
 
       # ---------- 打补丁: 跳过模块版本校验 ----------
       # 目的: 让 vendor_boot 里原厂编的 .ko (5.4.147) 能加载进本内核 (5.4.289)
